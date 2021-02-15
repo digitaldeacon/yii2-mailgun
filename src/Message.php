@@ -1,12 +1,11 @@
 <?php
-
 namespace boundstate\mailgun;
 
 
 use yii\base\NotSupportedException;
 use yii\helpers\VarDumper;
 use yii\mail\BaseMessage;
-use Mailgun\Messages\MessageBuilder;
+use Mailgun\Message\MessageBuilder;
 
 /**
  * Message implements a message class based on Mailgun.
@@ -41,6 +40,7 @@ class Message extends BaseMessage
 
     /**
      * @inheritdoc
+     * @deprecated Mailgun only supports UTF8
      */
     public function setCharset($charset)
     {
@@ -52,7 +52,8 @@ class Message extends BaseMessage
      */
     public function getFrom()
     {
-        return null;
+        $message = $this->getMessageBuilder()->getMessage();
+        return !empty($message['from']) ? $message['from'] : null;
     }
 
     /**
@@ -60,12 +61,10 @@ class Message extends BaseMessage
      */
     public function setFrom($from)
     {
-        if (is_array($from)) {
-            foreach ($from as $email => $fullName) {
-                $this->getMessageBuilder()->setFromAddress($email, ['full_name' => $fullName]);
-            }
-        } else {
-            $this->getMessageBuilder()->setFromAddress($from);
+        $addresses = EmailAddress::parse($from);
+
+        foreach ($addresses as $address) {
+            $this->getMessageBuilder()->setFromAddress($address->email, $address->variables);
         }
 
         return $this;
@@ -76,15 +75,23 @@ class Message extends BaseMessage
      */
     public function getReplyTo()
     {
-        return null;
+        $message = $this->getMessageBuilder()->getMessage();
+        return !empty($message['h:reply-to']) ? $message['h:reply-to'] : null;
     }
 
     /**
      * @inheritdoc
+     * @throws NotSupportedException if multiple addresses are provided (Mailgun only supports one)
      */
     public function setReplyTo($replyTo)
     {
-        $this->getMessageBuilder()->setReplyToAddress($replyTo);
+        $addresses = EmailAddress::parse($replyTo);
+
+        if (count($addresses) !== 1) {
+            throw new NotSupportedException('Mailgun only supports one reply-to address');
+        }
+
+        $this->getMessageBuilder()->setReplyToAddress($addresses[0]->email, $addresses[0]->variables);
 
         return $this;
     }
@@ -103,7 +110,11 @@ class Message extends BaseMessage
      */
     public function setTo($to)
     {
-        $this->getMessageBuilder()->addToRecipient($to);
+        $addresses = EmailAddress::parse($to);
+
+        foreach ($addresses as $address) {
+            $this->getMessageBuilder()->addToRecipient($address->email, $address->variables);
+        }
 
         return $this;
     }
@@ -122,7 +133,11 @@ class Message extends BaseMessage
      */
     public function setCc($cc)
     {
-        $this->getMessageBuilder()->addCcRecipient($cc);
+        $addresses = EmailAddress::parse($cc);
+
+        foreach ($addresses as $address) {
+            $this->getMessageBuilder()->addCcRecipient($address->email, $address->variables);
+        }
 
         return $this;
     }
@@ -141,7 +156,11 @@ class Message extends BaseMessage
      */
     public function setBcc($bcc)
     {
-        $this->getMessageBuilder()->addBccRecipient($bcc);
+        $addresses = EmailAddress::parse($bcc);
+
+        foreach ($addresses as $address) {
+            $this->getMessageBuilder()->addBccRecipient($address->email, $address->variables);
+        }
 
         return $this;
     }
@@ -201,7 +220,20 @@ class Message extends BaseMessage
      */
     public function attachContent($content, array $options = [])
     {
-        throw new NotSupportedException();
+        $attachmentName = !empty($options['fileName']) ? $options['fileName'] : null;
+        $message = $this->getMessageBuilder()->getMessage();
+
+        if (!isset($message['attachment'])) {
+            $message['attachment'] = [];
+        }
+
+        $message['attachment'][] = [
+            'fileContent' => $content,
+            'filename' => $attachmentName,
+        ];
+        $this->getMessageBuilder()->setMessage($message);
+
+        return $this;
     }
 
     /**
@@ -209,15 +241,18 @@ class Message extends BaseMessage
      */
     public function embed($fileName, array $options = [])
     {
-        throw new NotSupportedException();
+        $attachmentName = !empty($options['fileName']) ? $options['fileName'] : basename($fileName);
+        $this->getMessageBuilder()->addInlineImage("@{$fileName}", $attachmentName);
+        return 'cid:'.$attachmentName;
     }
 
     /**
      * @inheritdoc
+     * @deprecated Embedding content is not supported by Mailgun.
      */
     public function embedContent($content, array $options = [])
     {
-        throw new NotSupportedException();
+        throw new NotSupportedException('Embedding content is not supported');
     }
 
     /**
@@ -226,6 +261,17 @@ class Message extends BaseMessage
     public function toString()
     {
         return VarDumper::dumpAsString($this->getMessageBuilder()->getMessage());
+    }
+
+    /**
+     * Sets whether to send the message in test mode.
+     * @param bool $enabled Mailgun will accept the message but will not send it. This is useful for testing purposes.
+     * @return Message self reference.
+     */
+    public function setTestMode(bool $enabled): self {
+        $this->getMessageBuilder()->setTestMode($enabled);
+
+        return $this;
     }
 
     /**

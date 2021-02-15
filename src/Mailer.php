@@ -1,5 +1,4 @@
 <?php
-
 namespace boundstate\mailgun;
 
 use Yii;
@@ -19,7 +18,7 @@ use \Mailgun\Mailgun;
  *         'class' => 'boundstate\mailgun\Mailer',
  *         'key' => 'key-example',
  *         'domain' => 'mg.example.com',
- *          'server' => 'https://api.eu.mailgun.net'
+ *         'endpoint' => 'https://api.eu.mailgun.net'
  *     ],
  *     ...
  * ],
@@ -51,11 +50,11 @@ class Mailer extends BaseMailer
      * @var string Mailgun domain.
      */
     public $domain;
-    
+
     /**
-     * @var string Mailgun domain.
+     * @var string Mailgun endpoint.
      */
-    public $server;
+    public $endpoint = null;
 
     /**
      * @var Mailgun Mailgun instance.
@@ -76,14 +75,22 @@ class Mailer extends BaseMailer
 
     /**
      * @inheritdoc
+     * @param Message $message the message to be sent
      */
     protected function sendMessage($message)
     {
         Yii::info('Sending email', __METHOD__);
-        
-        $mg = $this->createMailgun();
-        $resp = $mg->messages()->send($this->domain, $message->getMessageBuilder()->getMessage());
-        return !empty($resp->getId());
+
+        if ($message instanceof BatchMessage) {
+            $message->getMessageBuilder()->finalize();
+        } else {
+            $this->getMailgun()->messages()->send(
+                $this->domain,
+                $message->getMessageBuilder()->getMessage()
+            );
+        }
+
+        return true;
     }
 
     /**
@@ -99,9 +106,6 @@ class Mailer extends BaseMailer
         if (!$this->domain) {
             throw new InvalidConfigException('Mailer::domain must be set.');
         }
-        if (!$this->server) {
-            throw new InvalidConfigException('Mailer::server must be set.');
-        }
-        return Mailgun::create($this->key, $this->server);
+        return $this->endpoint ? Mailgun::create($this->key, $this->endpoint) : Mailgun::create($this->key);
     }
 }
